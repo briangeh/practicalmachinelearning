@@ -1,0 +1,91 @@
+---
+title: "Practical Machine Learning Project"
+author: "Brian Geh"
+date: "7 September 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Executive Summary
+The effectiveness of 2 machine learning methods, Random Forests (RF) and Gradient Boosting (GBM), are evaluated against a set of wearable data. We find that the accuracy of RF is higher than GBM, with an estimated accuracy rate of 0.977 against 0.817.
+
+## Introduction
+This project utilises data from the Human Activity Recognition dataset from the Informatics Department of the Pontifical Catholic University of Rio de Janeiro [HAR Website](http://groupware.les.inf.puc-rio.br/har), which provides measurements using activity trackers / wearable technology while the wearer is conducting one out of 5 different activities.
+
+The goal of this project is to build a classifier that is able to predict which activity the wearer is doing given the measurements from the activity tracker.
+
+## Data Processing
+The training dataset consists of 19622 separate observations, with 160 columns in each observation. The first step is to reduce the number of columns while preserving as much useful information as possible, to reduce the amount of processing power required later on when the models are built.
+
+```{r import data, cache = TRUE, messages = FALSE}
+library(caret)
+library(dplyr)
+
+# imports data from the website
+training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+```
+
+### Step 1: Removing columns directly
+We start by directly removing columns by performing 2 steps (also shown in the code below):
+
+1. Using the *nzv* function in the *caret* package, remove the data that has very low variance (i.e. it doesn't change much) and thus little predictive power.
+2. Remove columns which are mostly NAs since they can't be used in the model
+3. Remove the first 5 columns, which are "X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2" and "cvtd_timestamp"
++ The "X" column is removed because it's simply an index column, while the "user_name" and "cvtd_timestamp" columns are removed because the classifier should be able to classify the type of activity no matter who is performing the activity or what time it was done.
++ Given the lack of documentation on the data, it is uncertain what "raw_timestamp_part_1" and "raw_timestamp_part_2" means, but a quick look at 2 boxplots of these columns against the activity column "classe" shows that these have minimal variance against the activity type, as shown below:
+
+```{r boxplots, fig.height = 4.35, fig.align = "center"}
+library(ggplot2)
+library(gridExtra)
+library(grid)
+
+# plots "raw_timestamp_part_1" and "raw_timestamp_part_2" against "classe"
+plot1 <- ggplot(training, aes(x = classe, y = raw_timestamp_part_1)) + geom_boxplot() + labs(x = "Activity Type")
+plot2 <- ggplot(training, aes(x = classe, y = raw_timestamp_part_2)) + geom_boxplot() + labs(x = "Activity Type")
+grid.arrange(plot1, plot2, ncol = 2, top = textGrob("Boxplots of raw_timestamp_part_1 and raw_timestamp_part_2 against Activity Type", gp=gpar(fontsize=13.5)))
+```
+
+```{r remove columns, cache = TRUE, eval = FALSE}
+# removes non-important columns from the dataset
+training <- select(training, -nzv(training))
+
+# finds columns which are mostly NAs
+colNA <- apply(training, 2, function(x) mean(is.na(x))) > 0.9
+colNA <- colNA[colNA == TRUE]
+
+# removes columns which are mostly NAs
+training <- subset(training, select = !(colnames(training) %in% names(colNA)))
+
+# removes the first 5 columns X:cvtd_timestamp
+training <- select(training, -(X:cvtd_timestamp))
+```
+
+This reduces the number of columns from 160 to 54. 
+
+### Step 2: Principal Components Analysis to further reduce columns
+After this, the columns are further consolidated by using the Principal Component Analysis method. To reduce the processing time, we set the variance threshold to be 95% (i.e. requiring less columns to explain 80% of the variation). This is shown in the R code below, and allows us to reduce the number of columns from 54 to 27 (26 measurement columns in the PCA and the *classe* (Activity Type) column).
+
+```{r pca, cache = TRUE, eval = FALSE}
+# finds the principal components, removing the final column (which is the activity type)
+# sets variance threshold to 0.8 to reduce number of columns output
+preObj <- preProcess(training[,-54], method = "pca", thresh = 0.95)
+
+# obtains principal components
+trainPC <- predict(preObj, (training[,-54]))
+```
+
+## Model
+We chose to build models using random forests and boosting and to compare their accuracy using caret's *train* function, and using its defaults.
+
+```{r model, cache = TRUE, messages = FALSE, eval = FALSE}
+# fits a model with random forests
+modelRF <- train(y = training$classe, x = trainPC, method = "rf")
+
+# fits a model with gradient boosting method
+modelGBM <- train(y = training$classe, x = trainPC, method = "gbm")
+```
+
+## Cross validation and expected out of sample error
+The default settings for caret's *train* package does a bootstrap resampling 25 times which gives an expected accuracy rate of 0.977 for the random forests method (i.e. an expected out of sample error that is higher than 0.023) and 0.817 (i.e. an expected out of sample error that is higher than 0.183) for the boosting method.
